@@ -1,0 +1,176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-white font-body antialiased;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  /* Glass card effect */
+  .glass-card {
+    @apply bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+      0 20px 40px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 30px rgba(0, 102, 230, 0.4);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 30px rgba(0, 255, 136, 0.4);
+  }
+
+  .glow-warning {
+    box-shadow: 0 0 30px rgba(255, 204, 0, 0.4);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-400 via-accent to-primary-400 bg-clip-text text-transparent;
+    background-size: 200% auto;
+  }
+
+  /* Animated gradient border */
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0, 102, 230, 0.5), rgba(0, 255, 136, 0.5));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply bg-primary hover:bg-primary-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-300;
+    @apply hover:shadow-[0_0_30px_rgba(0,102,230,0.5)] hover:-translate-y-0.5;
+  }
+
+  .btn-accent {
+    @apply bg-accent hover:bg-accent-dim text-background font-semibold px-6 py-3 rounded-xl transition-all duration-300;
+    @apply hover:shadow-[0_0_30px_rgba(0,255,136,0.5)] hover:-translate-y-0.5;
+  }
+
+  .btn-ghost {
+    @apply bg-white/5 hover:bg-white/10 text-white font-medium px-6 py-3 rounded-xl transition-all duration-300;
+    @apply border border-white/10 hover:border-white/20;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply glass-card p-6 relative overflow-hidden;
+  }
+
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 100px;
+    height: 100px;
+    background: radial-gradient(circle, currentColor 0%, transparent 70%);
+    opacity: 0.1;
+    transform: translate(30%, -30%);
+  }
+
+  /* Shimmer loading */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Input styles */
+  .input-field {
+    @apply bg-surface-secondary border border-white/10 rounded-xl px-4 py-3 text-white;
+    @apply placeholder:text-muted focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary;
+    @apply transition-all duration-300;
+  }
+
+  /* Table styles */
+  .table-row {
+    @apply border-b border-white/5 hover:bg-white/5 transition-colors;
+  }
+
+  /* Navigation */
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-muted hover:text-white;
+    @apply hover:bg-white/5 transition-all duration-300;
+  }
+
+  .nav-link.active {
+    @apply text-white bg-primary/10 border-l-2 border-primary;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Custom scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+/* Noise texture overlay */
+.noise-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
