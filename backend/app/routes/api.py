@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.auth import require_auth
 from app.models import StripeConnectedAccount, TrackedPayment, StripeWebhookLog
 from app.services.account_service import AccountService
 from app.services.stripe_client import StripeClient
@@ -98,6 +99,7 @@ class UpdateSettingsRequest(BaseModel):
 async def get_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get account details by ID."""
     result = await db.execute(
@@ -118,6 +120,7 @@ async def get_account(
 async def get_account_by_stripe_id(
     stripe_account_id: str,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get account details by Stripe account ID."""
     account_service = AccountService(db)
@@ -137,6 +140,7 @@ async def update_account_settings(
     account_id: UUID,
     settings: UpdateSettingsRequest,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Update account settings."""
     result = await db.execute(
@@ -174,6 +178,7 @@ async def update_account_settings(
 async def disconnect_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Disconnect a Stripe account."""
     result = await db.execute(
@@ -205,6 +210,7 @@ async def get_payments(
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get paginated payments for an account."""
     # Build query
@@ -244,6 +250,7 @@ async def get_payments(
 async def get_payment(
     payment_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get payment details by ID."""
     result = await db.execute(
@@ -268,6 +275,7 @@ async def get_analytics_overview(
     account_id: UUID,
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get analytics overview for an account."""
     # Current period
@@ -357,6 +365,7 @@ async def get_revenue_by_day(
     account_id: UUID,
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get daily revenue breakdown."""
     end_date = datetime.utcnow()
@@ -397,6 +406,7 @@ async def get_top_affiliates(
     limit: int = Query(10, ge=1, le=50),
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get top performing affiliates by revenue."""
     end_date = datetime.utcnow()
@@ -442,6 +452,7 @@ async def get_webhook_logs(
     page_size: int = Query(20, ge=1, le=100),
     event_type: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get webhook logs for an account."""
     query = select(StripeWebhookLog).where(StripeWebhookLog.account_id == account_id)
@@ -486,6 +497,7 @@ async def get_webhook_logs(
 async def get_stripe_account_info(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """Get live Stripe account information."""
     result = await db.execute(

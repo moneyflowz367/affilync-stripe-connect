@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.middleware.auth import require_auth
 from app.services.account_service import AccountService
 
 logger = logging.getLogger(__name__)
@@ -33,14 +34,13 @@ async def start_connect():
     """
     # Generate state token
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
-        "created_at": datetime.utcnow(),
-        "used": False,
-    }
 
-    # Clean up old states
+    # Clean up expired states (older than 10 minutes)
     cutoff = datetime.utcnow() - timedelta(minutes=10)
-    _oauth_states.clear()
+    expired = [k for k, v in _oauth_states.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _oauth_states[k]
+
     _oauth_states[state] = {"created_at": datetime.utcnow(), "used": False}
 
     # Build authorization URL
@@ -116,16 +116,25 @@ async def oauth_callback(
         )
 
 
-@router.get("/deauthorize")
+@router.post("/deauthorize")
 async def deauthorize(
     stripe_account_id: str = Query(...),
     db: AsyncSession = Depends(get_db),
+    auth: dict = Depends(require_auth),
 ):
     """
-    Handle account deauthorization request from user.
+    Handle account deauthorization request from authenticated user.
+
+    Requires the caller to be authenticated and own the account being
+    deauthorized (verified via JWT stripe_account_id claim).
     """
-    # This would typically require authentication
-    # For now, just log and acknowledge
+    # Verify account ownership for JWT-authenticated users
+    if auth.get("type") == "jwt":
+        if auth.get("stripe_account_id") != stripe_account_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot deauthorize an account you do not own",
+            )
 
     account_service = AccountService(db)
     await account_service.disconnect_account(stripe_account_id)
