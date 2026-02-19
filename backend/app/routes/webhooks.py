@@ -148,6 +148,10 @@ async def route_webhook(
         "customer.subscription.created": handle_subscription_created,
         "customer.subscription.updated": handle_subscription_updated,
         "customer.subscription.deleted": handle_subscription_deleted,
+        # Transfer events (PAY-XI-17)
+        "transfer.created": handle_transfer_event,
+        "transfer.updated": handle_transfer_event,
+        "transfer.reversed": handle_transfer_reversed,
         # Account events
         "account.application.deauthorized": handle_account_deauthorized,
         "account.updated": handle_account_updated,
@@ -409,6 +413,82 @@ async def handle_subscription_deleted(
     sub_id = subscription.get("id")
     logger.info(f"Subscription deleted: {sub_id}")
     return {"status": "logged", "subscription_id": sub_id, "action": "cancelled"}
+
+
+# ============== Transfer Handlers (PAY-XI-17) ==============
+
+
+async def handle_transfer_event(
+    transfer: dict,
+    account: StripeConnectedAccount,
+    db: AsyncSession,
+) -> dict:
+    """Handle transfer created/updated — check for reversed flag."""
+    transfer_id = transfer.get("id")
+    reversed_flag = transfer.get("reversed", False)
+
+    if reversed_flag:
+        return await handle_transfer_reversed(transfer, account, db)
+
+    return {"status": "logged", "transfer_id": transfer_id}
+
+
+async def handle_transfer_reversed(
+    transfer: dict,
+    account: StripeConnectedAccount,
+    db: AsyncSession,
+) -> dict:
+    """Handle transfer reversal — reverse associated commission (PAY-XI-17)."""
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models import TrackedPayment
+
+    transfer_id = transfer.get("id")
+    amount_cents = transfer.get("amount", 0)
+
+    logger.warning(
+        "Transfer reversed: %s, amount=%d cents, account=%s",
+        transfer_id,
+        amount_cents,
+        account.stripe_account_id if account else "unknown",
+    )
+
+    if not account:
+        return {"status": "no_account", "transfer_id": transfer_id}
+
+    # Find payment linked to this transfer via source_transaction (charge ID)
+    source_charge = transfer.get("source_transaction")
+    payment = None
+    if source_charge:
+        result = await db.execute(
+            select(TrackedPayment).where(
+                TrackedPayment.stripe_charge_id == source_charge
+            )
+        )
+        payment = result.scalar_one_or_none()
+
+    if payment and payment.commission_status not in ("reversed", "disputed"):
+        payment.commission_status = "reversed"
+
+        # Reverse commission from account stats
+        if payment.commission_amount:
+            reversal = Decimal(str(payment.commission_amount))
+            account.total_commissions = (
+                account.total_commissions or Decimal("0")
+            ) - reversal
+
+        await db.commit()
+
+        return {
+            "status": "transfer_reversed_commission_adjusted",
+            "transfer_id": transfer_id,
+            "amount_cents": amount_cents,
+        }
+
+    return {
+        "status": "transfer_reversed_no_payment",
+        "transfer_id": transfer_id,
+    }
 
 
 # ============== Account Handlers ==============
