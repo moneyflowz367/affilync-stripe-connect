@@ -3,6 +3,7 @@ OAuth Routes for Stripe Connect
 Handles the OAuth flow for connecting Stripe accounts
 """
 
+import json
 import logging
 import secrets
 from datetime import datetime, timedelta
@@ -21,8 +22,66 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# In-memory state store (use Redis in production)
-_oauth_states: dict = {}
+# Redis-backed state store with in-memory fallback
+_fallback_states: dict = {}
+_redis_client = None
+
+
+async def _get_redis():
+    """Get or create Redis client for OAuth state."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis.asyncio as aioredis
+
+            _redis_client = aioredis.from_url(
+                settings.redis_url, encoding="utf-8", decode_responses=True
+            )
+            await _redis_client.ping()
+        except Exception as e:
+            logger.warning(f"Redis unavailable for OAuth state: {e}")
+            _redis_client = None
+    return _redis_client
+
+
+async def _store_state(state: str) -> None:
+    """Store OAuth state in Redis (or fallback to memory)."""
+    redis = await _get_redis()
+    if redis:
+        try:
+            await redis.setex(f"oauth_state:sc:{state}", 600, json.dumps({"used": False}))
+            return
+        except Exception:
+            pass
+    # Fallback: clean expired + store in memory
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    expired = [k for k, v in _fallback_states.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _fallback_states[k]
+    _fallback_states[state] = {"created_at": datetime.utcnow(), "used": False}
+
+
+async def _validate_state(state: str) -> bool:
+    """Validate and consume OAuth state. Returns True if valid."""
+    redis = await _get_redis()
+    if redis:
+        try:
+            key = f"oauth_state:sc:{state}"
+            data = await redis.get(key)
+            if not data:
+                return False
+            parsed = json.loads(data)
+            if parsed.get("used"):
+                return False
+            await redis.setex(key, 60, json.dumps({"used": True}))
+            return True
+        except Exception:
+            pass
+    # Fallback
+    if state not in _fallback_states:
+        return False
+    data = _fallback_states.pop(state)
+    return not data.get("used")
 
 
 @router.get("/connect")
@@ -32,16 +91,9 @@ async def start_connect():
 
     Generates a state token and redirects to Stripe Connect authorization.
     """
-    # Generate state token
+    # Generate state token and store in Redis
     state = secrets.token_urlsafe(32)
-
-    # Clean up expired states (older than 10 minutes)
-    cutoff = datetime.utcnow() - timedelta(minutes=10)
-    expired = [k for k, v in _oauth_states.items() if v["created_at"] < cutoff]
-    for k in expired:
-        del _oauth_states[k]
-
-    _oauth_states[state] = {"created_at": datetime.utcnow(), "used": False}
+    await _store_state(state)
 
     # Build authorization URL
     account_service = AccountService(None)
@@ -70,17 +122,11 @@ async def oauth_callback(
             url=f"{settings.frontend_url}/connect?error={error}"
         )
 
-    # Validate state
-    if not state or state not in _oauth_states:
-        logger.warning("Invalid OAuth state")
+    # Validate state via Redis (or fallback)
+    if not state or not await _validate_state(state):
+        logger.warning("Invalid or expired OAuth state")
         return RedirectResponse(
             url=f"{settings.frontend_url}/connect?error=invalid_state"
-        )
-
-    state_data = _oauth_states.pop(state)
-    if state_data.get("used"):
-        return RedirectResponse(
-            url=f"{settings.frontend_url}/connect?error=state_reused"
         )
 
     if not code:
@@ -104,10 +150,21 @@ async def oauth_callback(
             algorithm=settings.jwt_algorithm,
         )
 
-        # Redirect to dashboard with token
-        return RedirectResponse(
-            url=f"{settings.frontend_url}/dashboard?token={token}&account_id={account.id}"
+        # Deliver JWT via HTTP-only cookie instead of URL parameter (SEC-XI-08)
+        response = RedirectResponse(
+            url=f"{settings.frontend_url}/dashboard",
+            status_code=302,
         )
+        response.set_cookie(
+            key="auth_token",
+            value=token,
+            max_age=settings.jwt_expire_minutes * 60,
+            secure=True,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     except Exception as e:
         logger.exception(f"OAuth callback error: {e}")

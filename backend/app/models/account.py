@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -46,7 +46,7 @@ class StripeConnectedAccount(Base):
 
     # Tracking settings
     tracking_enabled = Column(Boolean, default=True)
-    commission_rate = Column(Float, default=0.10)  # Default 10%
+    commission_rate = Column(Numeric(5, 4), default=0.10)  # Default 10%
     commission_type = Column(String(20), default="percentage")  # percentage or flat
 
     # Status
@@ -58,9 +58,9 @@ class StripeConnectedAccount(Base):
     settings = Column(JSONB, default=dict)
 
     # Statistics (cached)
-    total_tracked_revenue = Column(Float, default=0)
+    total_tracked_revenue = Column(Numeric(12, 2), default=0)
     total_tracked_payments = Column(Integer, default=0)
-    total_commissions = Column(Float, default=0)
+    total_commissions = Column(Numeric(12, 2), default=0)
 
     # Timestamps
     connected_at = Column(DateTime, default=datetime.utcnow)

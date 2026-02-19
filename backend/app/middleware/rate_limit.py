@@ -1,27 +1,52 @@
 """
-Rate limiting middleware for Stripe Connect API.
+Redis-backed rate limiting middleware for Stripe Connect API.
 """
 
+import logging
 import time
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, Optional
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
+# Fallback in-memory store (only used if Redis unavailable)
+_fallback_requests: dict = defaultdict(list)
+_redis_client = None
+
+
+async def get_redis():
+    """Get or create Redis client."""
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis.asyncio as aioredis
+
+            _redis_client = aioredis.from_url(
+                settings.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+            )
+            await _redis_client.ping()
+        except Exception as e:
+            logger.warning(f"Redis unavailable for rate limiting: {e}")
+            _redis_client = None
+    return _redis_client
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Simple in-memory rate limiting middleware.
-    Use Redis-based rate limiting in production.
+    Redis-backed rate limiting middleware.
+    Falls back to in-memory if Redis is unavailable.
     """
 
     def __init__(self, app, requests_per_minute: int = 60):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
-        self.requests: dict = defaultdict(list)
 
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP from request."""
@@ -30,37 +55,47 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
-    def _is_rate_limited(self, client_ip: str) -> bool:
-        """Check if client has exceeded rate limit."""
+    async def _check_redis_limit(self, client_ip: str) -> tuple[bool, int]:
+        """Check rate limit using Redis INCR + EXPIRE."""
+        redis = await get_redis()
+        if not redis:
+            return self._check_memory_limit(client_ip)
+
+        try:
+            key = f"rate_limit:sc:{client_ip}"
+            current = await redis.incr(key)
+            if current == 1:
+                await redis.expire(key, 60)
+            remaining = max(0, self.requests_per_minute - current)
+            return current > self.requests_per_minute, remaining
+        except Exception as e:
+            logger.warning(f"Redis rate limit error: {e}")
+            return self._check_memory_limit(client_ip)
+
+    def _check_memory_limit(self, client_ip: str) -> tuple[bool, int]:
+        """Fallback in-memory rate limit check."""
         now = time.time()
         minute_ago = now - 60
-
-        # Clean old requests
-        self.requests[client_ip] = [
-            t for t in self.requests[client_ip] if t > minute_ago
+        _fallback_requests[client_ip] = [
+            t for t in _fallback_requests[client_ip] if t > minute_ago
         ]
-
-        # Check limit
-        if len(self.requests[client_ip]) >= self.requests_per_minute:
-            return True
-
-        # Record request
-        self.requests[client_ip].append(now)
-        return False
+        if len(_fallback_requests[client_ip]) >= self.requests_per_minute:
+            return True, 0
+        _fallback_requests[client_ip].append(now)
+        return False, self.requests_per_minute - len(_fallback_requests[client_ip])
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request with rate limiting."""
-        # Skip rate limiting for health checks
         if request.url.path in ["/health", "/healthz", "/"]:
             return await call_next(request)
 
-        # Skip rate limiting for webhooks (they have their own auth)
         if request.url.path.startswith("/webhooks"):
             return await call_next(request)
 
         client_ip = self._get_client_ip(request)
+        is_limited, remaining = await self._check_redis_limit(client_ip)
 
-        if self._is_rate_limited(client_ip):
+        if is_limited:
             return Response(
                 content='{"detail": "Rate limit exceeded"}',
                 status_code=429,
@@ -73,10 +108,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
 
         response = await call_next(request)
-
-        # Add rate limit headers
-        remaining = self.requests_per_minute - len(self.requests[client_ip])
         response.headers["X-RateLimit-Limit"] = str(self.requests_per_minute)
         response.headers["X-RateLimit-Remaining"] = str(max(0, remaining))
-
         return response

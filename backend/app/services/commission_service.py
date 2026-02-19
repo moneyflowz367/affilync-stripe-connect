@@ -5,6 +5,7 @@ Handles tracking payments and calculating commissions
 
 import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import select
@@ -159,7 +160,7 @@ class CommissionService:
 
         # Update payment
         payment.amount_refunded = (payment.amount_refunded or 0) + refund_amount
-        payment.status = "refunded" if payment.amount_refunded >= payment.amount else "partial_refund"
+        payment.status = "refunded" if payment.amount_refunded >= (payment.amount or 0) else "partial_refund"
         payment.updated_at = datetime.utcnow()
 
         await self.db.commit()
@@ -180,7 +181,7 @@ class CommissionService:
                     brand_id=str(account.brand_id),
                     original_order_id=f"stripe_{charge_id}",
                     adjustment_type="refund",
-                    adjustment_amount=refund_amount / 100,
+                    adjustment_amount=float(Decimal(refund_amount) / Decimal("100")),
                     refund_id=f"stripe_{refund_id}",
                     metadata={
                         "source": "stripe",

@@ -5,7 +5,7 @@ TrackedPayment Model - Stores tracked Stripe payments/subscriptions
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -51,8 +51,8 @@ class TrackedPayment(Base):
     affiliate_id = Column(String(100), index=True)  # Affilync affiliate ID
 
     # Commission
-    commission_amount = Column(Float)
-    commission_rate = Column(Float)
+    commission_amount = Column(Numeric(12, 2))
+    commission_rate = Column(Numeric(5, 4))
     commission_status = Column(String(50), default="pending")  # pending, approved, paid
 
     # Status
@@ -86,14 +86,16 @@ class TrackedPayment(Base):
         return f"<TrackedPayment {self.stripe_charge_id}: ${self.amount / 100:.2f}>"
 
     @property
-    def amount_dollars(self) -> float:
+    def amount_dollars(self) -> Decimal:
         """Get amount in dollars."""
-        return (self.amount or 0) / 100
+        from decimal import Decimal
+        return Decimal(self.amount or 0) / Decimal("100")
 
     @property
-    def net_amount_dollars(self) -> float:
+    def net_amount_dollars(self) -> Decimal:
         """Get net amount in dollars."""
-        return (self.net_amount or self.amount or 0) / 100
+        from decimal import Decimal
+        return Decimal(self.net_amount or self.amount or 0) / Decimal("100")
 
     @property
     def has_attribution(self) -> bool:
@@ -111,7 +113,7 @@ class TrackedPayment(Base):
         self.sync_error = error
         self.synced_at = datetime.utcnow()
 
-    def calculate_commission(self, rate: float = None) -> float:
+    def calculate_commission(self, rate=None) -> "Decimal":
         """
         Calculate commission for this payment.
 
@@ -119,14 +121,17 @@ class TrackedPayment(Base):
             rate: Commission rate override (uses account rate if None)
 
         Returns:
-            Commission amount in cents
+            Commission amount in dollars (Decimal)
         """
-        if rate is None:
-            rate = self.commission_rate or 0.10
+        from decimal import Decimal, ROUND_HALF_UP
 
-        # Use net amount if available, otherwise amount
-        base = self.net_amount if self.net_amount else self.amount
-        return (base * rate) / 100  # Convert to dollars
+        if rate is None:
+            rate = self.commission_rate or Decimal("0.10")
+
+        rate = Decimal(str(rate))
+        # Use net amount if available, otherwise amount (both in cents)
+        base = Decimal(str(self.net_amount if self.net_amount else self.amount))
+        return (base * rate / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @classmethod
     def from_stripe_charge(

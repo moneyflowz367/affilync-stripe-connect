@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import StripeConnectedAccount, StripeWebhookLog
 from app.services.account_service import AccountService
+from affilync_integrations import AdjustmentData
 from app.services.commission_service import CommissionService
 from app.services.stripe_client import StripeClient
 
@@ -135,6 +136,9 @@ async def route_webhook(
         "charge.succeeded": handle_charge_succeeded,
         "charge.refunded": handle_charge_refunded,
         "charge.dispute.created": handle_dispute_created,
+        "charge.dispute.closed": handle_dispute_closed,
+        "charge.dispute.funds_withdrawn": handle_dispute_funds_withdrawn,
+        "charge.dispute.funds_reinstated": handle_dispute_funds_reinstated,
         # Payment Intent events
         "payment_intent.succeeded": handle_payment_intent_succeeded,
         # Invoice events
@@ -204,15 +208,16 @@ async def handle_dispute_created(
     account: StripeConnectedAccount,
     db: AsyncSession,
 ) -> dict:
-    """Handle dispute created - flag payment."""
-    charge_id = dispute.get("charge")
-    dispute_id = dispute.get("id")
-
-    logger.warning(f"Dispute created: {dispute_id} for charge {charge_id}")
-
-    # Mark payment as disputed
+    """Handle dispute created - flag payment and reverse commission."""
+    from decimal import Decimal
     from sqlalchemy import select
     from app.models import TrackedPayment
+
+    charge_id = dispute.get("charge")
+    dispute_id = dispute.get("id")
+    dispute_amount = dispute.get("amount", 0)
+
+    logger.warning(f"Dispute created: {dispute_id} for charge {charge_id}, amount={dispute_amount}")
 
     result = await db.execute(
         select(TrackedPayment).where(TrackedPayment.stripe_charge_id == charge_id)
@@ -222,13 +227,106 @@ async def handle_dispute_created(
     if payment:
         payment.is_disputed = True
         payment.commission_status = "disputed"
+
+        # Reverse commission from account stats (PAY-XI-03)
+        if payment.commission_amount and account:
+            reversal = Decimal(str(payment.commission_amount))
+            account.total_commissions = (account.total_commissions or Decimal("0")) - reversal
+
         await db.commit()
 
+        # Send chargeback adjustment to Affilync
+        if payment.affilync_conversion_id and account and account.brand_id:
+            try:
+                commission_service = CommissionService(db)
+                adjustment_data = AdjustmentData(
+                    brand_id=str(account.brand_id),
+                    original_order_id=f"stripe_{charge_id}",
+                    adjustment_type="chargeback",
+                    adjustment_amount=dispute_amount / 100,
+                    refund_id=f"stripe_dispute_{dispute_id}",
+                    metadata={
+                        "source": "stripe",
+                        "dispute_id": dispute_id,
+                        "dispute_reason": dispute.get("reason"),
+                        "stripe_account_id": account.stripe_account_id,
+                    },
+                )
+                await commission_service.api_client.track_adjustment(adjustment_data)
+            except Exception as e:
+                logger.error(f"Failed to send chargeback adjustment: {e}")
+
     return {
-        "status": "logged",
+        "status": "disputed_and_reversed",
         "dispute_id": dispute_id,
         "charge_id": charge_id,
+        "dispute_amount_cents": dispute_amount,
     }
+
+
+async def handle_dispute_closed(
+    dispute: dict,
+    account: StripeConnectedAccount,
+    db: AsyncSession,
+) -> dict:
+    """Handle dispute closed - reinstate commission if merchant won."""
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models import TrackedPayment
+
+    charge_id = dispute.get("charge")
+    dispute_id = dispute.get("id")
+    dispute_status = dispute.get("status")
+
+    logger.info(f"Dispute closed: {dispute_id}, status={dispute_status}")
+
+    result = await db.execute(
+        select(TrackedPayment).where(TrackedPayment.stripe_charge_id == charge_id)
+    )
+    payment = result.scalar_one_or_none()
+
+    if payment and dispute_status == "won":
+        # Merchant won the dispute - reinstate commission
+        payment.is_disputed = False
+        payment.commission_status = "approved"
+
+        if payment.commission_amount and account:
+            reinstatement = Decimal(str(payment.commission_amount))
+            account.total_commissions = (account.total_commissions or Decimal("0")) + reinstatement
+
+        await db.commit()
+        return {"status": "reinstated", "dispute_id": dispute_id}
+
+    elif payment and dispute_status == "lost":
+        payment.commission_status = "reversed"
+        await db.commit()
+        return {"status": "reversed_permanent", "dispute_id": dispute_id}
+
+    return {"status": "logged", "dispute_id": dispute_id, "dispute_status": dispute_status}
+
+
+async def handle_dispute_funds_withdrawn(
+    dispute: dict,
+    account: StripeConnectedAccount,
+    db: AsyncSession,
+) -> dict:
+    """Handle funds withdrawn from account due to dispute."""
+    dispute_id = dispute.get("id")
+    amount = dispute.get("amount", 0)
+    logger.warning(f"Dispute funds withdrawn: {dispute_id}, amount={amount}")
+    return {"status": "logged", "dispute_id": dispute_id, "amount_cents": amount}
+
+
+async def handle_dispute_funds_reinstated(
+    dispute: dict,
+    account: StripeConnectedAccount,
+    db: AsyncSession,
+) -> dict:
+    """Handle funds reinstated after winning dispute."""
+    dispute_id = dispute.get("id")
+    amount = dispute.get("amount", 0)
+    logger.info(f"Dispute funds reinstated: {dispute_id}, amount={amount}")
+    return {"status": "logged", "dispute_id": dispute_id, "amount_cents": amount}
 
 
 # ============== Payment Intent Handlers ==============
