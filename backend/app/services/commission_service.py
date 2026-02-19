@@ -181,7 +181,7 @@ class CommissionService:
                     brand_id=str(account.brand_id),
                     original_order_id=f"stripe_{charge_id}",
                     adjustment_type="refund",
-                    adjustment_amount=float(Decimal(refund_amount) / Decimal("100")),
+                    adjustment_amount=float(Decimal(str(refund_amount)) / Decimal("100")),
                     refund_id=f"stripe_{refund_id}",
                     metadata={
                         "source": "stripe",
