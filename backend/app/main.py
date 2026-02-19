@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import engine, Base
-from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.rate_limit import RateLimitMiddleware, get_limiter
 from app.routes import oauth, webhooks, api
 
 # Configure logging
@@ -62,8 +62,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add rate limiting
-app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
+# Add rate limiting (shared library: Redis-backed with in-memory fallback)
+app.add_middleware(RateLimitMiddleware, limiter=get_limiter())
 
 
 # Health check endpoint
