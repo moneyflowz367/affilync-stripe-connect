@@ -4,7 +4,7 @@ Process incoming webhooks from Stripe
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -34,7 +34,7 @@ async def handle_stripe_webhook(
 
     Handles both platform events and Connect events.
     """
-    start_time = datetime.utcnow()
+    start_time = datetime.now(UTC)
 
     if not stripe_signature:
         raise HTTPException(
@@ -528,7 +528,7 @@ async def handle_account_updated(
     account.charges_enabled = stripe_account.get("charges_enabled", False)
     account.payouts_enabled = stripe_account.get("payouts_enabled", False)
     account.business_name = stripe_account.get("business_profile", {}).get("name")
-    account.updated_at = datetime.utcnow()
+    account.updated_at = datetime.now(UTC)
 
     await db.commit()
 

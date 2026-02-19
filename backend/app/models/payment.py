@@ -2,7 +2,7 @@
 TrackedPayment Model - Stores tracked Stripe payments/subscriptions
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
@@ -105,13 +105,13 @@ class TrackedPayment(Base):
     def mark_synced(self, conversion_id: str) -> None:
         """Mark payment as synced to Affilync."""
         self.affilync_conversion_id = conversion_id
-        self.synced_at = datetime.utcnow()
+        self.synced_at = datetime.now(UTC)
         self.sync_error = None
 
     def mark_sync_error(self, error: str) -> None:
         """Mark sync as failed."""
         self.sync_error = error
-        self.synced_at = datetime.utcnow()
+        self.synced_at = datetime.now(UTC)
 
     def calculate_commission(self, rate=None) -> "Decimal":
         """
