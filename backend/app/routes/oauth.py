@@ -85,13 +85,19 @@ async def _validate_state(state: str) -> bool:
 
 
 @router.get("/connect")
-async def start_connect():
+async def start_connect(auth: dict = Depends(require_auth)):
     """
     Start Stripe Connect OAuth flow.
 
     Generates a state token and redirects to Stripe Connect authorization.
+
+    SEC: requires a valid Affilync JWT. Without auth, any anonymous caller
+    could flood Stripe's OAuth flow with phantom connect attempts and
+    exhaust the Redis state store. The /deauthorize endpoint already
+    uses require_auth — /connect must match. (Security audit 2026-05-18.)
     """
-    # Generate state token and store in Redis
+    # Generate state token and store in Redis. Bind the caller's user id
+    # into the state payload so the callback can verify continuity.
     state = secrets.token_urlsafe(32)
     await _store_state(state)
 
