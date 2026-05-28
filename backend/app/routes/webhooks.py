@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -63,6 +64,24 @@ async def handle_stripe_webhook(
     connected_account_id = event.get("account")
 
     logger.info(f"Received webhook: {event_type} (account: {connected_account_id or 'platform'})")
+
+    # V58.6 P0 — idempotency check. Stripe retries failed webhooks for up to
+    # 3 days, and resubmits on transient errors. Without this guard, every
+    # retry re-routes through the handler (commission credits, account
+    # state changes, etc.) — duplicate writes possible. Shopify + BigCommerce
+    # already have similar dedup; Stripe was the missing one.
+    if event_id:
+        dup_stmt = select(StripeWebhookLog.id).where(
+            StripeWebhookLog.stripe_event_id == event_id
+        )
+        if (await db.execute(dup_stmt)).scalar_one_or_none() is not None:
+            logger.info(
+                "stripe_webhook_dedup_skip event_id=%s type=%s account=%s",
+                event_id,
+                event_type,
+                connected_account_id or "platform",
+            )
+            return {"status": "duplicate", "event_id": event_id}
 
     # Get account if this is a Connect event
     account = None
