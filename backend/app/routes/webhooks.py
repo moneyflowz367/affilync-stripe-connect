@@ -125,7 +125,39 @@ async def handle_stripe_webhook(
         webhook_log.mark_failed(str(e))
         await db.commit()
 
-        # Return 200 to prevent Stripe from retrying
+        # V58.27 P1 (2026-05-28): re-raise for money-moving event
+        # families. The prior path returned HTTP 200 unconditionally
+        # → Stripe never retried failed refund / dispute / transfer-
+        # reversed handlers, leaving commissions un-reversed and
+        # dashboards drifting from Stripe's source-of-truth. Same
+        # class as V52 CRIT-08 (12 conversions, 1 commission).
+        #
+        # Non-money events (customer.created, account.updated, etc.)
+        # keep the 200 + status=error posture so Stripe doesn't
+        # retry-storm on a transient DB hiccup that doesn't affect
+        # ledger accuracy.
+        _money_event_prefixes = (
+            "charge.refund",
+            "charge.dispute",
+            "charge.refunded",
+            "transfer.reversed",
+            "transfer.failed",
+            "payout.failed",
+            "payout.canceled",
+            "invoice.payment_failed",
+        )
+        if any(event_type.startswith(p) for p in _money_event_prefixes):
+            # Re-raise to surface HTTP 500 — Stripe will retry per its
+            # standard exponential backoff (~3 days). The webhook_log
+            # row is already committed with mark_failed so forensics
+            # has the trail.
+            logger.error(
+                "stripe webhook: re-raising %s for retry (handler failed)",
+                event_type,
+            )
+            raise
+
+        # Non-money events: 200 + status=error so Stripe drops the retry.
         return {"status": "error", "error": str(e)}
 
 
