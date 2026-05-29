@@ -95,11 +95,32 @@ class UpdateSettingsRequest(BaseModel):
 # ============== Account Endpoints ==============
 
 
+async def authorize_account(
+    account_id: "UUID",
+    auth: dict = Depends(require_auth),
+) -> dict:
+    """SECURITY: enforce that the caller owns this Stripe account.
+
+    require_auth only proves the JWT is valid; it never checked that the
+    token's account_id matches the {account_id} in the path, so any merchant
+    (or anyone with the shared API key) could read/modify another merchant's
+    payments, commission_rate, and webhook_url. A trusted service api_key is
+    still allowed (worker / main-API calls).
+    """
+    if auth.get("type") == "api_key":
+        return auth
+    if auth.get("account_id") and str(auth.get("account_id")) == str(account_id):
+        return auth
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Not authorized for this account",
+    )
+
 @router.get("/account/{account_id}", response_model=AccountResponse)
 async def get_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get account details by ID."""
     result = await db.execute(
@@ -132,6 +153,17 @@ async def get_account_by_stripe_id(
             detail="Account not found",
         )
 
+    # SECURITY: enforce ownership (require_auth alone does not). Allow a trusted
+    # service api_key; otherwise the caller's token must match this account.
+    if auth.get("type") != "api_key" and not (
+        str(auth.get("account_id") or "") == str(account.id)
+        or str(auth.get("stripe_account_id") or "") == str(stripe_account_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized for this account",
+        )
+
     return account
 
 
@@ -140,7 +172,7 @@ async def update_account_settings(
     account_id: UUID,
     settings: UpdateSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Update account settings."""
     result = await db.execute(
@@ -178,7 +210,7 @@ async def update_account_settings(
 async def disconnect_account(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Disconnect a Stripe account."""
     result = await db.execute(
@@ -210,7 +242,7 @@ async def get_payments(
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get paginated payments for an account."""
     # Build query
@@ -264,6 +296,15 @@ async def get_payment(
             detail="Payment not found",
         )
 
+    # SECURITY: enforce that the caller owns the account this payment belongs to.
+    if auth.get("type") != "api_key" and str(auth.get("account_id") or "") != str(
+        payment.account_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized for this payment",
+        )
+
     return payment
 
 
@@ -275,7 +316,7 @@ async def get_analytics_overview(
     account_id: UUID,
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get analytics overview for an account."""
     # Current period
@@ -365,7 +406,7 @@ async def get_revenue_by_day(
     account_id: UUID,
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get daily revenue breakdown."""
     end_date = datetime.utcnow()
@@ -406,7 +447,7 @@ async def get_top_affiliates(
     limit: int = Query(10, ge=1, le=50),
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get top performing affiliates by revenue."""
     end_date = datetime.utcnow()
@@ -452,7 +493,7 @@ async def get_webhook_logs(
     page_size: int = Query(20, ge=1, le=100),
     event_type: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get webhook logs for an account."""
     query = select(StripeWebhookLog).where(StripeWebhookLog.account_id == account_id)
@@ -497,7 +538,7 @@ async def get_webhook_logs(
 async def get_stripe_account_info(
     account_id: UUID,
     db: AsyncSession = Depends(get_db),
-    auth: dict = Depends(require_auth),
+    auth: dict = Depends(authorize_account),
 ):
     """Get live Stripe account information."""
     result = await db.execute(

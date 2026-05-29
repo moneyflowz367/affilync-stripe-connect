@@ -3,6 +3,7 @@ TrackedPayment Model - Stores tracked Stripe payments/subscriptions
 """
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
@@ -70,8 +71,10 @@ class TrackedPayment(Base):
     customer_email_hash = Column(String(64))
     customer_description = Column(String(255))
 
-    # Metadata
-    metadata = Column(JSONB, default=dict)  # Stripe charge metadata
+    # Metadata. NOTE: the Python attribute cannot be `metadata` — that name is
+    # reserved by SQLAlchemy's declarative Base (raises InvalidRequestError at
+    # class definition). Map to the existing "metadata" DB column explicitly.
+    payment_metadata = Column("metadata", JSONB, default=dict)  # Stripe charge metadata
     receipt_url = Column(Text)
 
     # Timestamps
@@ -183,7 +186,7 @@ class TrackedPayment(Base):
             tracking_code=tracking_code,
             customer_email_hash=email_hash,
             customer_description=charge.get("description"),
-            metadata=charge.get("metadata", {}),
+            payment_metadata=charge.get("metadata", {}),
             receipt_url=charge.get("receipt_url"),
             stripe_created_at=datetime.utcfromtimestamp(charge.get("created", 0)),
         )
