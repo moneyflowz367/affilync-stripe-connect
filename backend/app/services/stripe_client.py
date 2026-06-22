@@ -7,7 +7,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import stripe
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -343,7 +342,8 @@ class StripeClient:
         Args:
             payload: Raw request body
             signature: Stripe-Signature header
-            secret: Webhook signing secret (uses settings if None)
+            secret: Explicit webhook signing secret. When None, the configured
+                platform secret is tried first, then the Connect secret (if set).
 
         Returns:
             Parsed event object
@@ -351,11 +351,38 @@ class StripeClient:
         Raises:
             stripe.error.SignatureVerificationError: On invalid signature
         """
-        secret = secret or settings.stripe_webhook_secret
-        event = stripe.Webhook.construct_event(
-            payload,
-            signature,
-            secret,
-            tolerance=settings.webhook_tolerance,
-        )
-        return dict(event)
+        # Explicit secret (e.g. tests) bypasses the multi-secret logic.
+        if secret:
+            event = stripe.Webhook.construct_event(
+                payload,
+                signature,
+                secret,
+                tolerance=settings.webhook_tolerance,
+            )
+            return dict(event)
+
+        # This single endpoint receives both platform events and Connect
+        # (connected-account) events. Stripe signs each webhook endpoint with its
+        # own secret, so try the platform secret first and, on a signature
+        # mismatch, fall back to the Connect endpoint secret when one is
+        # configured. If no Connect secret is set, behaviour is identical to
+        # verifying against the platform secret alone.
+        candidate_secrets = [settings.stripe_webhook_secret]
+        if settings.stripe_connect_webhook_secret:
+            candidate_secrets.append(settings.stripe_connect_webhook_secret)
+
+        last_error: Optional[stripe.error.SignatureVerificationError] = None
+        for candidate in candidate_secrets:
+            try:
+                event = stripe.Webhook.construct_event(
+                    payload,
+                    signature,
+                    candidate,
+                    tolerance=settings.webhook_tolerance,
+                )
+                return dict(event)
+            except stripe.error.SignatureVerificationError as exc:
+                last_error = exc
+
+        # All candidate secrets rejected the signature — surface the failure.
+        raise last_error

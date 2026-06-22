@@ -26,7 +26,12 @@ class Settings(BaseSettings):
     # Stripe Configuration
     stripe_client_id: str  # Stripe Connect platform client ID
     stripe_secret_key: str  # Stripe platform secret key
-    stripe_webhook_secret: str  # Webhook endpoint signing secret
+    stripe_webhook_secret: str  # Webhook endpoint signing secret (platform events)
+    # Optional second signing secret. Stripe issues a distinct secret per webhook
+    # endpoint, so if Connect (connected-account) events are ever pointed at a
+    # separate endpoint in the Stripe dashboard, set this to that endpoint's
+    # secret. While unset, verification behaves exactly as before (single secret).
+    stripe_connect_webhook_secret: Optional[str] = None
     stripe_publishable_key: str = ""
 
     # Affilync API
