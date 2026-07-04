@@ -22,7 +22,9 @@ pydantic-settings~=2.1.0
 httpx~=0.26.0
 
 # Shared library
-affilync-integrations-common>=0.1.0
+# Shared client for Affilync platform ingestion — private repo; Render builds need
+# a GitHub token with read access (dev: pip install -e ../affilync-integrations-common).
+affilync-integrations-common @ git+https://github.com/moneyflowz367/affilync-integrations-common.git@main
 
 # Redis (required for production rate limiting)
 redis~=5.0.0
