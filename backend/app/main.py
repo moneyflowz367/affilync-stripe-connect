@@ -11,9 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import engine, Base
+from app.database import Base, engine
 from app.middleware.rate_limit import RateLimitMiddleware, get_limiter
-from app.routes import oauth, webhooks, api
+from app.routes import api, billing, oauth, webhooks
 
 # Configure logging
 logging.basicConfig(
@@ -97,6 +97,12 @@ app.include_router(
     api.router,
     prefix="/api",
     tags=["API"],
+)
+
+app.include_router(
+    billing.router,
+    prefix="/api/billing",
+    tags=["Billing"],
 )
 
 

@@ -9,10 +9,11 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from alembic import context
 
 # Alembic Config object — access to .ini values
 config = context.config
@@ -25,8 +26,9 @@ if config.config_file_name is not None:
 from app.database import Base  # noqa: E402
 from app.models import (  # noqa: E402, F401
     StripeConnectedAccount,
-    TrackedPayment,
+    StripeConnectSubscription,
     StripeWebhookLog,
+    TrackedPayment,
 )
 
 # MetaData target for autogenerate support
