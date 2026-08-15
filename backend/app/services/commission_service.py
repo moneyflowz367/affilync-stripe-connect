@@ -316,7 +316,10 @@ class CommissionService:
             order_value=payment.net_amount_dollars,
             total_value=payment.amount_dollars,
             currency=payment.currency,
-            conversion_type="purchase",
+            # conversion_type MUST be a ConversionCreate enum value
+            # (sale/lead/signup/download/subscription/custom) — "purchase"
+            # isn't valid (same fix applied to Shopify/BigCommerce).
+            conversion_type="sale",
             metadata={
                 "source": "stripe",
                 "stripe_account_id": account.stripe_account_id,
