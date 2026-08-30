@@ -11,7 +11,9 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import UUID
+
+from app.models._types import JSONB
 from sqlalchemy.orm import relationship
 
 from app.database import Base
